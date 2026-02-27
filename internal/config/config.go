@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -66,8 +67,23 @@ type Config struct {
 	// AuthPatterns contains custom auth dependency patterns
 	AuthPatterns []string `yaml:"auth_patterns"`
 
+	// OpenAPISpec is the path to a bundled OpenAPI spec file (YAML or JSON).
+	// When provided, per-route security definitions override AST-based auth detection.
+	OpenAPISpec string `yaml:"openapi_spec"`
+
+	// PublicRoutes lists routes that are intentionally public (e.g., health checks,
+	// metrics endpoints, or routes excluded from auth middleware at runtime).
+	// Supports exact matches and prefix matches with trailing *.
+	PublicRoutes []PublicRouteConfig `yaml:"public_routes"`
+
 	// MinSeverity is the minimum severity to report
 	MinSeverity string `yaml:"min_severity"`
+}
+
+// PublicRouteConfig declares a route as intentionally public.
+type PublicRouteConfig struct {
+	Route  string `yaml:"route"`
+	Reason string `yaml:"reason"`
 }
 
 // RulesConfig contains rule enablement configuration.
@@ -131,6 +147,23 @@ func (c *Config) IsRuleEnabled(ruleID string) bool {
 	}
 
 	return true
+}
+
+// IsPublicRoute checks if a route is declared as intentionally public.
+// Supports exact matches and prefix matches (routes ending with *).
+func (c *Config) IsPublicRoute(route string) (bool, string) {
+	for _, pr := range c.PublicRoutes {
+		pattern := pr.Route
+		if strings.HasSuffix(pattern, "*") {
+			prefix := strings.TrimSuffix(pattern, "*")
+			if strings.HasPrefix(route, prefix) {
+				return true, pr.Reason
+			}
+		} else if route == pattern {
+			return true, pr.Reason
+		}
+	}
+	return false, ""
 }
 
 // IsSuppressed checks if a finding should be suppressed.

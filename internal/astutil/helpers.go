@@ -39,6 +39,19 @@ func selectorToString(sel *ast.SelectorExpr) string {
 	}
 }
 
+// httpMethodConstants maps net/http method constants to their string values.
+var httpMethodConstants = map[string]string{
+	"MethodGet":     "GET",
+	"MethodHead":    "HEAD",
+	"MethodPost":    "POST",
+	"MethodPut":     "PUT",
+	"MethodPatch":   "PATCH",
+	"MethodDelete":  "DELETE",
+	"MethodConnect": "CONNECT",
+	"MethodOptions": "OPTIONS",
+	"MethodTrace":   "TRACE",
+}
+
 // GetStringValue extracts the string value from an expression.
 func GetStringValue(expr ast.Expr) string {
 	switch e := expr.(type) {
@@ -54,6 +67,13 @@ func GetStringValue(expr ast.Expr) string {
 	case *ast.Ident:
 		// Variable reference - can't resolve at compile time
 		return ""
+	case *ast.SelectorExpr:
+		// Resolve well-known constants like http.MethodGet
+		if ident, ok := e.X.(*ast.Ident); ok && ident.Name == "http" {
+			if val, ok := httpMethodConstants[e.Sel.Name]; ok {
+				return val
+			}
+		}
 	}
 	return ""
 }

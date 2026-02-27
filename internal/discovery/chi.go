@@ -24,7 +24,8 @@ var chiRouteMethods = map[string]models.HTTPMethod{
 
 // ChiDiscoverer discovers endpoints in Chi applications.
 type ChiDiscoverer struct {
-	authExtractor *authorization.ChiExtractor
+	authExtractor    *authorization.ChiExtractor
+	globalMiddleware []string
 }
 
 // NewChiDiscoverer creates a new ChiDiscoverer.
@@ -32,6 +33,56 @@ func NewChiDiscoverer() *ChiDiscoverer {
 	return &ChiDiscoverer{
 		authExtractor: authorization.NewChiExtractor(),
 	}
+}
+
+// CollectMiddleware scans a source file for router.Use() calls and stores
+// the middleware names for cross-file auth detection.
+func (d *ChiDiscoverer) CollectMiddleware(source *astutil.ParsedSource) {
+	ast.Inspect(source.AST, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		callName := astutil.GetCallName(call)
+
+		// Match .Use() calls — could be router.Use(), r.Use(), httpRouter.Use(), etc.
+		// Also handle chained calls like httpServer.Router().Use()
+		if !strings.HasSuffix(callName, ".Use") {
+			// Check for chained selector (e.g., httpServer.Router().Use())
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Use" {
+				// This is a .Use() call via chained expression
+			} else {
+				return true
+			}
+		}
+
+		// Extract middleware names from all arguments
+		for _, arg := range call.Args {
+			name := d.extractMiddlewareName(arg)
+			if name != "" {
+				d.globalMiddleware = append(d.globalMiddleware, name)
+			}
+		}
+
+		return true
+	})
+}
+
+// extractMiddlewareName extracts a readable name from a middleware argument expression.
+func (d *ChiDiscoverer) extractMiddlewareName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		if ident, ok := e.X.(*ast.Ident); ok {
+			return ident.Name + "." + e.Sel.Name
+		}
+	case *ast.CallExpr:
+		// e.g., tokenDataExtractionMiddleware.Middleware() or otelchi.Middleware(...)
+		return astutil.GetCallName(e)
+	}
+	return ""
 }
 
 // Framework returns the framework this discoverer handles.
@@ -197,8 +248,8 @@ func (d *ChiDiscoverer) createEndpoint(call *ast.CallExpr, source *astutil.Parse
 		prefix = group.Prefix
 	}
 
-	// Extract authorization info (Chi uses Use() for middleware)
-	auth := d.authExtractor.Extract(nil, source)
+	// Extract authorization info using globally collected middleware
+	auth := d.authExtractor.Extract(d.globalMiddleware, source)
 
 	endpoint := &models.Endpoint{
 		Route:         route,
